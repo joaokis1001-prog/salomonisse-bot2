@@ -2,8 +2,12 @@ name: Salomonisse Bot
 
 on:
   schedule:
-    - cron: "55 23 * * *"   # liga 23:55
-    - cron: "0 */2 * * *"   # janelas de tratamento
+    # Infecção diária — 23:55 BR
+    - cron: "55 2 * * *"
+
+    # Tratamento / Quarentena / Crônica — a cada 2h BR
+    - cron: "0 1-23/2 * * *"
+
   workflow_dispatch:
 
 jobs:
