@@ -1,15 +1,15 @@
 import discord
 from discord.ext import commands
-from datetime import datetime, timedelta, time
+from datetime import datetime, timedelta
 import pytz
 import json
 import os
 
-# ================= CONFIGURAÇÕES =================
+# ================= CONFIG =================
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-GUILD_ID = 123456789012345678  # ID do servidor
+GUILD_ID = 123456789012345678
 
 ROLE_SAV = 1453502439167623289
 ROLE_QUARENTENA = 1453505974282485956
@@ -21,13 +21,9 @@ TIMEZONE = pytz.timezone("America/Sao_Paulo")
 
 DATA_FILE = "dados.json"
 
-TRATAMENTO_JANELAS = [
-    (0, 10), (2, 10), (4, 10), (6, 10),
-    (8, 10), (10, 10), (12, 10), (14, 10),
-    (16, 10), (18, 10), (20, 10), (22, 10),
-]
+TRATAMENTO_JANELAS = [0,2,4,6,8,10,12,14,16,18,20,22]
 
-# =================================================
+# ================= BOT =================
 
 intents = discord.Intents.default()
 intents.members = True
@@ -54,14 +50,14 @@ def agora_br():
 
 def tratamento_aberto():
     agora = agora_br()
-    for hora, duracao in TRATAMENTO_JANELAS:
-        inicio = agora.replace(hour=hora, minute=0, second=0, microsecond=0)
-        fim = inicio + timedelta(minutes=duracao)
+    for h in TRATAMENTO_JANELAS:
+        inicio = agora.replace(hour=h, minute=0, second=0, microsecond=0)
+        fim = inicio + timedelta(minutes=10)
         if inicio <= agora <= fim:
             return True
     return False
 
-# ================= BOT =================
+# ================= EVENT =================
 
 @bot.event
 async def on_ready():
@@ -69,7 +65,7 @@ async def on_ready():
     await executar_logica()
     await bot.close()
 
-# ================= LÓGICA PRINCIPAL =================
+# ================= LÓGICA =================
 
 async def executar_logica():
     guild = bot.get_guild(GUILD_ID)
@@ -83,33 +79,47 @@ async def executar_logica():
         if member.bot:
             continue
 
-        # ===== SE TEM SALOMONISSE =====
-        if guild.get_role(ROLE_SAV) in member.roles:
-            user_id = str(member.id)
+        user_id = str(member.id)
 
+        # ===== IGNORA CRÔNICOS =====
+        if guild.get_role(ROLE_CRONICA) in member.roles:
+            continue
+
+        # ===== NOVA INFECÇÃO =====
+        if guild.get_role(ROLE_SAV) in member.roles:
             if user_id not in dados:
                 dados[user_id] = {
                     "infectado_em": agora.isoformat(),
-                    "tratou": False
+                    "avisado_tratamento": False,
+                    "quarentena_aplicada": False
                 }
 
             infectado_em = datetime.fromisoformat(dados[user_id]["infectado_em"])
 
-            # ===== 48h SEM TRATAR → CRÔNICA =====
+            # ===== 48h → CRÔNICA =====
             if agora - infectado_em >= timedelta(hours=48):
                 await aplicar_cronica(member, guild)
                 dados.pop(user_id, None)
                 continue
 
-            # ===== 40 MIN DE QUARENTENA =====
+            # ===== 40 MIN → QUARENTENA =====
             if agora - infectado_em >= timedelta(minutes=40):
-                if tratamento_aberto():
+                if not dados[user_id]["quarentena_aplicada"]:
+                    await member.add_roles(
+                        guild.get_role(ROLE_QUARENTENA),
+                        reason="Quarentena iniciada"
+                    )
+                    dados[user_id]["quarentena_aplicada"] = True
+
+                # ===== AVISO DE TRATAMENTO =====
+                if tratamento_aberto() and not dados[user_id]["avisado_tratamento"]:
                     canal = guild.get_channel(CANAL_QUARENTENA)
                     if canal:
                         await canal.send(
-                            f"{member.mention}, 💊 **tratamento disponível agora!** "
-                            f"Você tem **10 minutos**."
+                            f"{member.mention} 💊 **Tratamento disponível agora!**\n"
+                            f"⏳ Você tem **10 minutos**."
                         )
+                    dados[user_id]["avisado_tratamento"] = True
 
     salvar_dados(dados)
 
