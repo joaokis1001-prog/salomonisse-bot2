@@ -73,17 +73,18 @@ async def on_ready():
     guild = client.get_guild(GUILD_ID)
     if not guild:
         print("❌ Guild não encontrada")
+        await client.close()
         return
 
     canal = guild.get_channel(CANAL_QUARENTENA_ID)
     if not canal:
         print("❌ Canal não encontrado")
+        await client.close()
         return
-
-    dados = carregar_dados()
 
     if not tratamento_aberto():
         print("⏰ Fora da janela de tratamento")
+        await client.close()
         return
 
     # ENVIA MENSAGEM DE TRATAMENTO
@@ -100,15 +101,18 @@ async def on_ready():
 
     print("📨 Mensagem enviada")
 
-    # Remove mensagem após 10 minutos
+    # Remove mensagem após X minutos
     await asyncio.sleep(DURACAO_MENSAGEM_MINUTOS * 60)
+
     try:
         await msg.delete()
         print("🗑 Mensagem removida")
     except:
         pass
 
-    await client.close()  # encerra para não virar 24/7
+    print("🔌 Encerrando bot automaticamente")
+    await client.close()  # ENCERRA PARA NÃO VIRAR 24/7
+
 
 @client.event
 async def on_reaction_add(reaction, user):
@@ -143,6 +147,7 @@ async def on_reaction_add(reaction, user):
     )
 
     print(f"✅ Tratamento iniciado para {user}")
+
 
 # ================= START =================
 
