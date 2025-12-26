@@ -20,7 +20,7 @@ DURACAO_MENSAGEM_MINUTOS = 10
 # Janelas a cada 2 horas
 TRATAMENTO_JANELAS = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22]
 
-MODO_TESTE = True  # <<< MUDE PARA False EM PRODUÇÃO
+MODO_TESTE = False  # <<< MUDE PARA False EM PRODUÇÃO
 
 DADOS_ARQ = "dados.json"
 TZ = pytz.timezone("America/Sao_Paulo")
