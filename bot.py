@@ -13,6 +13,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = 123456789012345678
 
 ROLE_SAV = 1453502439167623289
+ROLE_QUARENTENA = 1453505974282485956
 ROLE_CRONICA = 1453808748387766334
 
 CANAL_QUARENTENA = 1453640324097376391
@@ -23,11 +24,7 @@ DATA_FILE = "dados.json"
 
 TRATAMENTO_JANELAS = [0,2,4,6,8,10,12,14,16,18,20,22]
 
-EMOJI_TRATAMENTO = "💊"
-
-TEMPO_TRATAMENTO = timedelta(minutes=40)
-TEMPO_CRONICA = timedelta(hours=48)
-DURACAO_MENSAGEM = timedelta(minutes=10)
+TEST_MODE = True  # <<< MUDE PARA FALSE EM PRODUÇÃO
 
 # ================= BOT =================
 
@@ -35,6 +32,7 @@ intents = discord.Intents.default()
 intents.members = True
 intents.guilds = True
 intents.reactions = True
+intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -50,18 +48,20 @@ def salvar_dados(dados):
     with open(DATA_FILE, "w") as f:
         json.dump(dados, f, indent=2)
 
-# ================= TEMPO =================
+# ================= HORÁRIOS =================
 
 def agora_br():
     return datetime.now(TIMEZONE)
 
 def janela_ativa():
+    if TEST_MODE:
+        return True
+
     agora = agora_br()
     for h in TRATAMENTO_JANELAS:
-        inicio = agora.replace(hour=h, minute=0, second=0, microsecond=0)
-        envio = inicio - timedelta(minutes=5)
-        fim = envio + DURACAO_MENSAGEM
-        if envio <= agora <= fim:
+        inicio = agora.replace(hour=h, minute=55, second=0, microsecond=0)
+        fim = inicio + timedelta(minutes=10)
+        if inicio <= agora <= fim:
             return True
     return False
 
@@ -72,28 +72,6 @@ async def on_ready():
     print(f"🤖 Bot conectado como {bot.user}")
     await executar_logica()
     await bot.close()
-
-@bot.event
-async def on_reaction_add(reaction, user):
-    if user.bot or reaction.emoji != EMOJI_TRATAMENTO:
-        return
-
-    dados = carregar_dados()
-    user_id = str(user.id)
-
-    if user_id not in dados:
-        return
-
-    agora = agora_br()
-
-    if dados[user_id].get("cura_em"):
-        return
-
-    dados[user_id]["tratamento_aceito_em"] = agora.isoformat()
-    dados[user_id]["cura_em"] = (agora + TEMPO_TRATAMENTO).isoformat()
-    dados[user_id]["mensagem_id"] = None
-
-    salvar_dados(dados)
 
 # ================= LÓGICA =================
 
@@ -106,8 +84,11 @@ async def executar_logica():
     if not canal:
         return
 
+    if not janela_ativa():
+        print("⏳ Fora da janela de tratamento")
+        return
+
     dados = carregar_dados()
-    agora = agora_br()
 
     for member in guild.members:
         if member.bot:
@@ -121,70 +102,75 @@ async def executar_logica():
 
         user_id = str(member.id)
 
-        if user_id not in dados:
-            dados[user_id] = {
-                "infectado_em": agora.isoformat(),
-                "tratamento_aceito_em": None,
-                "cura_em": None,
-                "mensagem_id": None
-            }
-
-        infectado_em = datetime.fromisoformat(dados[user_id]["infectado_em"])
-
-        # ===== CRÔNICA =====
-        if agora - infectado_em >= TEMPO_CRONICA:
-            await aplicar_cronica(member, guild)
-            dados.pop(user_id, None)
+        if user_id in dados and dados[user_id].get("tratamento_iniciado"):
             continue
 
-        # ===== CURA =====
-        if dados[user_id]["cura_em"]:
-            cura_em = datetime.fromisoformat(dados[user_id]["cura_em"])
-            if agora >= cura_em:
-                await member.remove_roles(guild.get_role(ROLE_SAV), reason="Tratamento concluído")
-                dados.pop(user_id, None)
-            continue
+        msg = await canal.send(
+            f"{member.mention} 💊 **Tratamento disponível!**\n"
+            f"Reaja com 💊 para iniciar.\n"
+            f"⏳ A mensagem dura 10 minutos."
+        )
+        await msg.add_reaction("💊")
 
-        # ===== MENSAGEM DE TRATAMENTO =====
-        if janela_ativa() and not dados[user_id]["mensagem_id"]:
-            msg = await canal.send(
-                f"{member.mention} 💊 **Tratamento disponível contra a Salomonisse**\n"
-                f"Reaja com 💊 para iniciar o tratamento.\n"
-                f"⏳ Cura em **40 minutos**."
-            )
-            await msg.add_reaction(EMOJI_TRATAMENTO)
+        dados[user_id] = {
+            "mensagem_id": msg.id,
+            "tratamento_iniciado": False,
+            "infectado_em": agora_br().isoformat()
+        }
 
-            dados[user_id]["mensagem_id"] = msg.id
-            salvar_dados(dados)
+        salvar_dados(dados)
 
-            # apagar mensagem após 10 minutos
-            asyncio.create_task(apagar_mensagem(msg, user_id))
+        bot.loop.create_task(remover_mensagem(msg))
 
+# ================= REAÇÃO =================
+
+@bot.event
+async def on_reaction_add(reaction, user):
+    if user.bot or reaction.emoji != "💊":
+        return
+
+    guild = reaction.message.guild
+    member = guild.get_member(user.id)
+    dados = carregar_dados()
+
+    user_id = str(user.id)
+    if user_id not in dados:
+        return
+
+    if dados[user_id]["tratamento_iniciado"]:
+        return
+
+    dados[user_id]["tratamento_iniciado"] = True
+    salvar_dados(dados)
+
+    await reaction.message.channel.send(
+        f"🧪 {user.mention} iniciou o tratamento.\n"
+        f"⏳ Cura em **40 minutos**."
+    )
+
+    await asyncio.sleep(40 * 60)
+
+    await curar(member, guild)
+    dados.pop(user_id, None)
     salvar_dados(dados)
 
 # ================= AÇÕES =================
 
-async def apagar_mensagem(msg, user_id):
-    await asyncio.sleep(DURACAO_MENSAGEM.total_seconds())
+async def curar(member, guild):
+    await member.remove_roles(
+        guild.get_role(ROLE_SAV),
+        guild.get_role(ROLE_QUARENTENA),
+        reason="Tratamento concluído"
+    )
+
+# ================= LIMPEZA =================
+
+async def remover_mensagem(msg):
+    await asyncio.sleep(10 * 60)
     try:
         await msg.delete()
     except:
         pass
-
-    dados = carregar_dados()
-    if user_id in dados:
-        dados[user_id]["mensagem_id"] = None
-        salvar_dados(dados)
-
-async def aplicar_cronica(member, guild):
-    await member.remove_roles(
-        guild.get_role(ROLE_SAV),
-        reason="Salomonisse Crônica"
-    )
-    await member.add_roles(
-        guild.get_role(ROLE_CRONICA),
-        reason="Salomonisse Crônica"
-    )
 
 # ================= RUN =================
 
